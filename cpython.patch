@@ -1,0 +1,460 @@
+diff --git a/Include/pyport.h b/Include/pyport.h
+index 35562a6a89..724b0a7f6b 100644
+--- a/Include/pyport.h
++++ b/Include/pyport.h
+@@ -252,6 +252,8 @@ typedef Py_intptr_t     Py_ssize_t;
+ #   ifndef PY_FORMAT_LONG_LONG
+ #       if defined(MS_WIN64) || defined(MS_WINDOWS)
+ #           define PY_FORMAT_LONG_LONG "I64"
++#       elif defined(__VITA__)
++#           define PY_FORMAT_LONG_LONG "ll"
+ #       else
+ #           error "This platform's pyconfig.h needs to define PY_FORMAT_LONG_LONG"
+ #       endif
+diff --git a/Lib/posixpath.py b/Lib/posixpath.py
+index bbc2369ce7..a3b550f32f 100644
+--- a/Lib/posixpath.py
++++ b/Lib/posixpath.py
+@@ -51,6 +51,9 @@ def normcase(s):
+ 
+ def isabs(s):
+     """Test whether a path is absolute"""
++    if sys.platform == 'vita':
++        i = s.find('/', 0)
++        return (i != -1 and i != 0) and s[i - 1] == ':'
+     return s.startswith('/')
+ 
+ 
+@@ -71,6 +74,10 @@ def join(a, *p):
+             path +=  b
+         else:
+             path += '/' + b
++        if sys.platform == 'vita':
++            i = b.find('/', 0)
++            if (i != -1 and i != 0) and b[i - 1] == ':':
++                path = b
+     return path
+ 
+ 
+@@ -358,7 +365,10 @@ def normpath(path):
+     comps = new_comps
+     path = slash.join(comps)
+     if initial_slashes:
+-        path = slash*initial_slashes + path
++        if sys.platform == 'vita':
++            path = 'ux0:/' + path
++        else:
++            path = slash*initial_slashes + path
+     return path or dot
+ 
+ 
+@@ -386,8 +396,13 @@ symbolic links encountered in the path."""
+ # encountered in the second path.
+ def _joinrealpath(path, rest, seen):
+     if isabs(rest):
+-        rest = rest[1:]
+-        path = sep
++        i = rest.find('/', 0)
++        if (sys.platform == 'vita') and (i != -1 and i != 0) and rest[i - 1] == ':':
++            path = rest[:i + 1]
++            rest = rest[i + 1:]
++        else:
++            rest = rest[1:]
++            path = sep
+ 
+     while rest:
+         name, _, rest = rest.partition(sep)
+diff --git a/Modules/Setup.dist b/Modules/Setup.dist
+index bbc9222129..43f3ff45e7 100644
+--- a/Modules/Setup.dist
++++ b/Modules/Setup.dist
+@@ -114,7 +114,7 @@ PYTHONPATH=$(COREPYTHONPATH)
+ 
+ posix posixmodule.c		# posix (UNIX) system calls
+ errno errnomodule.c		# posix (UNIX) errno values
+-pwd pwdmodule.c			# this is needed to find out the user's home dir
++#pwd pwdmodule.c			# this is needed to find out the user's home dir
+ 				# if $HOME is not set
+ _sre _sre.c			# Fredrik Lundh's new regular expressions
+ _codecs _codecsmodule.c		# access to the builtin codecs and codec registry
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+index 7a1a6945c1..51c42a3810 100644
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -141,6 +141,7 @@ corresponding Unix manual entries for more information on calls.");
+ /* Everything needed is defined in PC/os2emx/pyconfig.h or vms/pyconfig.h */
+ #else                   /* all other compilers */
+ /* Unix functions that the configure script doesn't check for */
++#if !defined(__VITA__)
+ #define HAVE_EXECV      1
+ #define HAVE_FORK       1
+ #if defined(__USLC__) && defined(__SCO_VERSION__)       /* SCO UDK Compiler */
+@@ -161,6 +162,53 @@ corresponding Unix manual entries for more information on calls.");
+ #define HAVE_SYSTEM     1
+ #define HAVE_WAIT       1
+ #define HAVE_TTYNAME    1
++#else
++#ifdef HAVE_POPEN
++#undef HAVE_POPEN
++#endif
++#ifdef HAVE_GETUID
++#undef HAVE_GETUID
++#endif
++#ifdef HAVE_GETPPID
++#undef HAVE_GETPPID
++#endif
++#ifdef HAVE_GETGID
++#undef HAVE_GETGID
++#endif
++#ifdef HAVE_GETEUID
++#undef HAVE_GETEUID
++#endif
++#ifdef HAVE_GETEGID
++#undef HAVE_GETEGID
++#endif
++#ifdef HAVE_UTIME
++#undef HAVE_UTIME
++#endif
++#ifdef HAVE_RMDIR
++#undef HAVE_RMDIR
++#endif
++#ifdef HAVE_PIPE
++#undef HAVE_PIPE
++#endif
++#ifdef HAVE_FDATASYNC
++#undef HAVE_FDATASYNC
++#endif
++#ifdef HAVE_TTYNAME
++#undef HAVE_TTYNAME
++#endif
++#ifdef HAVE_FSYNC
++#undef HAVE_FSYNC
++#endif
++#ifdef HAVE_EXECV
++#undef HAVE_EXECV
++#endif
++#ifdef HAVE_SYMLINK
++#undef HAVE_SYMLINK
++#endif
++#ifdef HAVE_WAIT
++#undef HAVE_WAIT
++#endif
++#endif  /* ! __VITA__ */
+ #endif  /* PYOS_OS2 && PYCC_GCC && __VMS */
+ #endif  /* _MSC_VER */
+ #endif  /* __BORLANDC__ */
+@@ -628,6 +676,7 @@ _PyVerify_fd_dup2(int fd1, int fd2)
+ #endif
+ 
+ /* Return a dictionary corresponding to the POSIX environment table */
++#ifndef __VITA__
+ #if defined(WITH_NEXT_FRAMEWORK) || (defined(__APPLE__) && defined(Py_ENABLE_SHARED))
+ /* On Darwin/MacOSX a shared library or framework has no access to
+ ** environ directly, we must obtain it with _NSGetEnviron(). See also
+@@ -638,10 +687,14 @@ static char **environ;
+ #elif !defined(_MSC_VER) && ( !defined(__WATCOMC__) || defined(__QNX__) )
+ extern char **environ;
+ #endif /* !_MSC_VER */
++#endif
+ 
+ static PyObject *
+ convertenviron(void)
+ {
++#ifdef __VITA__
++    return NULL;
++#else
+     PyObject *d;
+     char **e;
+ #if defined(PYOS_OS2)
+@@ -697,6 +750,7 @@ convertenviron(void)
+     }
+ #endif
+     return d;
++#endif
+ }
+ 
+ 
+@@ -1814,6 +1868,7 @@ posix_ctermid(PyObject *self, PyObject *noargs)
+ }
+ #endif
+ 
++#ifdef HAVE_CHDIR
+ PyDoc_STRVAR(posix_chdir__doc__,
+ "chdir(path)\n\n\
+ Change the current working directory to the specified path.");
+@@ -1831,6 +1886,7 @@ posix_chdir(PyObject *self, PyObject *args)
+     return posix_1str(args, "et:chdir", chdir);
+ #endif
+ }
++#endif
+ 
+ #ifdef HAVE_FCHDIR
+ PyDoc_STRVAR(posix_fchdir__doc__,
+@@ -1846,6 +1902,7 @@ posix_fchdir(PyObject *self, PyObject *fdobj)
+ #endif /* HAVE_FCHDIR */
+ 
+ 
++#ifdef HAVE_CHMOD
+ PyDoc_STRVAR(posix_chmod__doc__,
+ "chmod(path, mode)\n\n\
+ Change the access permissions of a file.");
+@@ -1918,6 +1975,7 @@ posix_chmod(PyObject *self, PyObject *args)
+     return Py_None;
+ #endif
+ }
++#endif
+ 
+ #ifdef HAVE_FCHMOD
+ PyDoc_STRVAR(posix_fchmod__doc__,
+@@ -2656,6 +2714,7 @@ posix__getfullpathname(PyObject *self, PyObject *args)
+ } /* end of posix__getfullpathname */
+ #endif /* MS_WINDOWS */
+ 
++#ifdef HAVE_MKDIR
+ PyDoc_STRVAR(posix_mkdir__doc__,
+ "mkdir(path [, mode=0777])\n\n\
+ Create a directory.");
+@@ -2714,6 +2773,7 @@ posix_mkdir(PyObject *self, PyObject *args)
+     return Py_None;
+ #endif /* MS_WINDOWS */
+ }
++#endif
+ 
+ 
+ /* sys/resource.h is needed for at least: wait3(), wait4(), broken nice. */
+@@ -2804,6 +2864,7 @@ error:
+ }
+ 
+ 
++#ifdef HAVE_RMDIR
+ PyDoc_STRVAR(posix_rmdir__doc__,
+ "rmdir(path)\n\n\
+ Remove a directory.");
+@@ -2817,6 +2878,7 @@ posix_rmdir(PyObject *self, PyObject *args)
+     return posix_1str(args, "et:rmdir", rmdir);
+ #endif
+ }
++#endif
+ 
+ 
+ PyDoc_STRVAR(posix_stat__doc__,
+@@ -2854,6 +2916,7 @@ posix_system(PyObject *self, PyObject *args)
+ #endif
+ 
+ 
++#if defined(HAVE_UMASK)
+ PyDoc_STRVAR(posix_umask__doc__,
+ "umask(new_mask) -> old_mask\n\n\
+ Set the current numeric umask and return the previous umask.");
+@@ -2869,6 +2932,7 @@ posix_umask(PyObject *self, PyObject *args)
+         return posix_error();
+     return PyInt_FromLong((long)i);
+ }
++#endif /* defined(HAVE_UMASK) */
+ 
+ 
+ PyDoc_STRVAR(posix_unlink__doc__,
+@@ -2952,6 +3016,7 @@ extract_time(PyObject *t, time_t* sec, long* usec)
+     return 0;
+ }
+ 
++#ifdef HAVE_UTIME
+ PyDoc_STRVAR(posix_utime__doc__,
+ "utime(path, (atime, mtime))\n\
+ utime(path, None)\n\n\
+@@ -3115,6 +3180,7 @@ done:
+ #undef MTIME
+ #endif /* MS_WINDOWS */
+ }
++#endif
+ 
+ 
+ /* Process operations */
+@@ -8862,11 +8928,15 @@ static PyMethodDef posix_methods[] = {
+ #ifdef HAVE_TTYNAME
+     {"ttyname",         posix_ttyname, METH_VARARGS, posix_ttyname__doc__},
+ #endif
++#ifdef HAVE_CHDIR
+     {"chdir",           posix_chdir, METH_VARARGS, posix_chdir__doc__},
++#endif
+ #ifdef HAVE_CHFLAGS
+     {"chflags",         posix_chflags, METH_VARARGS, posix_chflags__doc__},
+ #endif /* HAVE_CHFLAGS */
++#ifdef HAVE_CHMOD
+     {"chmod",           posix_chmod, METH_VARARGS, posix_chmod__doc__},
++#endif
+ #ifdef HAVE_FCHMOD
+     {"fchmod",          posix_fchmod, METH_VARARGS, posix_fchmod__doc__},
+ #endif /* HAVE_FCHMOD */
+@@ -8902,7 +8972,9 @@ static PyMethodDef posix_methods[] = {
+ #endif /* HAVE_LINK */
+     {"listdir",         posix_listdir, METH_VARARGS, posix_listdir__doc__},
+     {"lstat",           posix_lstat, METH_VARARGS, posix_lstat__doc__},
++#ifdef HAVE_MKDIR
+     {"mkdir",           posix_mkdir, METH_VARARGS, posix_mkdir__doc__},
++#endif
+ #ifdef HAVE_NICE
+     {"nice",            posix_nice, METH_VARARGS, posix_nice__doc__},
+ #endif /* HAVE_NICE */
+@@ -8910,7 +8982,9 @@ static PyMethodDef posix_methods[] = {
+     {"readlink",        posix_readlink, METH_VARARGS, posix_readlink__doc__},
+ #endif /* HAVE_READLINK */
+     {"rename",          posix_rename, METH_VARARGS, posix_rename__doc__},
++#ifdef HAVE_RMDIR
+     {"rmdir",           posix_rmdir, METH_VARARGS, posix_rmdir__doc__},
++#endif
+     {"stat",            posix_stat, METH_VARARGS, posix_stat__doc__},
+     {"stat_float_times", stat_float_times, METH_VARARGS, stat_float_times__doc__},
+ #ifdef HAVE_SYMLINK
+@@ -8919,13 +8993,17 @@ static PyMethodDef posix_methods[] = {
+ #ifdef HAVE_SYSTEM
+     {"system",          posix_system, METH_VARARGS, posix_system__doc__},
+ #endif
++#ifdef HAVE_UMASK
+     {"umask",           posix_umask, METH_VARARGS, posix_umask__doc__},
++#endif
+ #ifdef HAVE_UNAME
+     {"uname",           posix_uname, METH_NOARGS, posix_uname__doc__},
+ #endif /* HAVE_UNAME */
+     {"unlink",          posix_unlink, METH_VARARGS, posix_unlink__doc__},
+     {"remove",          posix_unlink, METH_VARARGS, posix_remove__doc__},
++#ifdef HAVE_UTIME
+     {"utime",           posix_utime, METH_VARARGS, posix_utime__doc__},
++#endif /* HAVE_UTIME */
+ #ifdef HAVE_TIMES
+     {"times",           posix_times, METH_NOARGS, posix_times__doc__},
+ #endif /* HAVE_TIMES */
+diff --git a/Modules/timemodule.c b/Modules/timemodule.c
+index 61b8d612a4..13a6d988ab 100644
+--- a/Modules/timemodule.c
++++ b/Modules/timemodule.c
+@@ -808,7 +808,11 @@ inittimezone(PyObject *m) {
+ #ifdef PYOS_OS2
+     PyModule_AddIntConstant(m, "timezone", _timezone);
+ #else /* !PYOS_OS2 */
++#ifdef __VITA__
++    PyModule_AddIntConstant(m, "timezone", 0);
++#else
+     PyModule_AddIntConstant(m, "timezone", timezone);
++#endif /* __VITA__ */
+ #endif /* PYOS_OS2 */
+ #ifdef HAVE_ALTZONE
+     PyModule_AddIntConstant(m, "altzone", altzone);
+@@ -816,12 +820,25 @@ inittimezone(PyObject *m) {
+ #ifdef PYOS_OS2
+     PyModule_AddIntConstant(m, "altzone", _timezone-3600);
+ #else /* !PYOS_OS2 */
++#ifdef __VITA__
++    PyModule_AddIntConstant(m, "altzone", 0-3600);
++#else
+     PyModule_AddIntConstant(m, "altzone", timezone-3600);
++#endif
+ #endif /* PYOS_OS2 */
+ #endif
++#ifdef __VITA__
++    PyModule_AddIntConstant(m, "daylight", 0);
++#else
+     PyModule_AddIntConstant(m, "daylight", daylight);
++#endif
++#ifdef __VITA__
++    PyModule_AddObject(m, "tzname",
++                       Py_BuildValue("(zz)", "GMT", "UTC"));
++#else
+     PyModule_AddObject(m, "tzname",
+                        Py_BuildValue("(zz)", tzname[0], tzname[1]));
++#endif
+ #else /* !HAVE_TZNAME || __GLIBC__ || __CYGWIN__*/
+ #ifdef HAVE_STRUCT_TM_TM_ZONE
+     {
+diff --git a/Python/getcwd.c b/Python/getcwd.c
+index 44dc9e69ab..6fbfc47eea 100644
+--- a/Python/getcwd.c
++++ b/Python/getcwd.c
+@@ -48,6 +48,7 @@ getcwd(char *buf, int size)
+ 
+ #else /* !HAVE_GETWD */
+ 
++#ifndef __VITA__
+ /* Version for really old UNIX systems -- use pipe from pwd */
+ 
+ #ifndef PWD_CMD
+@@ -79,4 +80,13 @@ getcwd(char *buf, int size)
+     return buf;
+ }
+ 
++#else
++
++char *
++getcwd(char *buf, int size)
++{
++    return NULL;
++}
++
++#endif
+ #endif /* !HAVE_GETWD */
+diff --git a/Python/import.c b/Python/import.c
+index ccbd949e62..1fa46561c4 100644
+--- a/Python/import.c
++++ b/Python/import.c
+@@ -1402,6 +1402,13 @@ find_module(char *fullname, char *subname, PyObject *path, char *buf,
+         Py_DECREF(meta_path);
+     }
+ 
++    // printf("PATCH: find_module(%s)\n", fullname);
++    if (fullname != NULL && is_builtin(fullname)) {
++      // printf("PATCH: submodule %s is built-in!\n", fullname);
++      strcpy(buf, fullname);
++      return &fd_builtin;
++    }
++
+     if (path != NULL && PyString_Check(path)) {
+         /* The only type of submodule allowed inside a "frozen"
+            package are other frozen modules or packages. */
+diff --git a/Python/thread_pthread.h b/Python/thread_pthread.h
+index 4d792a123a..cce8673a8d 100644
+--- a/Python/thread_pthread.h
++++ b/Python/thread_pthread.h
+@@ -264,7 +264,11 @@ PyThread_get_thread_ident(void)
+     /* Jump through some hoops for Alpha OSF/1 */
+     threadid = pthread_self();
+ #if SIZEOF_PTHREAD_T <= SIZEOF_LONG
++#ifdef __VITA__
++    return (long) threadid - 1;
++#else
+     return (long) threadid;
++#endif
+ #else
+     return (long) *(long *) &threadid;
+ #endif
+@@ -277,6 +281,7 @@ PyThread_exit_thread(void)
+     if (!initialized) {
+         exit(0);
+     }
++    pthread_exit(0);
+ }
+ 
+ #ifdef USE_SEMAPHORES
+diff --git a/configure b/configure
+index 63d675312d..921e1e6103 100755
+--- a/configure
++++ b/configure
+@@ -3287,6 +3287,9 @@ then
+ 	*-*-cygwin*)
+ 		ac_sys_system=Cygwin
+ 		;;
++	arm-vita-eabi*)
++		ac_sys_system=Vita
++		;;
+ 	*)
+ 		# for now, limit cross builds to known configurations
+ 		MACHDEP="unknown"
+@@ -3333,6 +3336,9 @@ if test "$cross_compiling" = yes; then
+ 	*-*-cygwin*)
+ 		_host_cpu=
+ 		;;
++	arm-vita-eabi*)
++		_host_cpu=$host_cpu
++		;;
+ 	*)
+ 		# for now, limit cross builds to known configurations
+ 		MACHDEP="unknown"
