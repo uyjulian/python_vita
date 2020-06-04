@@ -1,0 +1,45 @@
+pkgname=cpython
+pkgver=2.7.17
+pkgrel=1
+url="https://www.python.org/"
+source=(
+  "https://github.com/python/cpython/archive/v${pkgver}.tar.gz"
+  "Setup.local"
+  "cpython.patch"
+  "config.site"
+  "LICENSE"
+)
+sha256sums=(
+  'd2b73d2d2607ec3f67bc10cef2d383008f95b835150d97cd00e55283d4afe360'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+)
+
+prepare() {
+  cd $pkgname-$pkgver
+  patch -p1 < ../cpython.patch
+  cp -v ../Setup.local ./
+  cp -v ../config.site ./
+}
+
+build() {
+  cd $pkgname-$pkgver
+  CONFIG_SITE=config.site \
+  CFLAGS="-g -Wl,-q -D__VITA__ -D__ARM_ARCH=7 -D__ARM_ARCH_7A__ -mfpu=neon -mcpu=cortex-a9 -mfloat-abi=hard" \
+  ./configure --host=arm-vita-eabi --build=arm --prefix=$prefix --disable-shared --enable-static --disable-ipv6
+  make libpython2.7.a
+}
+
+package () {
+  cd $pkgname-$pkgver
+  make DESTDIR=$pkgdir install
+
+  # Add license to package
+  mkdir -m 755 -p "$pkgdir/$prefix/share/licenses/$pkgname"
+  install -m 644 README "$pkgdir/$prefix/share/licenses/$pkgname"
+
+  # Remove binaries and man pages we don't need
+  rm -rf "$pkgdir/$prefix/share/man" "$pkgdir/$prefix/bin/"
+}
